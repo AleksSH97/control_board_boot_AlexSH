@@ -1,0 +1,12 @@
+[submodule "common/arm/cmsis_core"]
+	path = common/arm/cmsis_core
+	url = https://github.com/STMicroelectronics/cmsis_core.git
+[submodule "common/st/cmsis_device_f4"]
+	path = common/st/cmsis_device_f4
+	url = https://github.com/STMicroelectronics/cmsis_device_f4.git
+[submodule "common/st/stm32f4xx_hal_driver"]
+	path = common/st/stm32f4xx_hal_driver
+	url = https://github.com/STMicroelectronics/stm32f4xx_hal_driver.git
+[submodule "common/lib/lwprintf"]
+	path = common/lib/lwprintf
+	url = https://github.com/MaJerle/lwprintf.git
