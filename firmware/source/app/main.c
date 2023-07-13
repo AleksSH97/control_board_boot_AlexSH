@@ -110,9 +110,8 @@ uint8_t AES_KEY[] = { 0x4D, 0x61, 0x73, 0x74, 0x65, 0x72, 0x69, 0x6E,
 /******************************************************************************/
 /* Private function prototypes ---------------------------------------------- */
 /******************************************************************************/
-void prvInitializeMCU(void);
+void prvInitializeSystem(void);
 void prvSystemClockConfig(void);
-void prvSystemHandlerControlConfig(void);
 void prvGPIOConfig(void);
 
 
@@ -124,7 +123,7 @@ void prvGPIOConfig(void);
  */
 int main(void)
 {
-  prvInitializeMCU();
+  prvInitializeSystem();
 
   for(;;);
 }
@@ -139,7 +138,6 @@ int main(void)
 void prvInitializeMCU(void)
 {
   HAL_Init();
-  prvSystemHandlerControlConfig();
   prvSystemClockConfig();
   prvGPIOConfig();
   IndicationInit();
@@ -154,6 +152,10 @@ void prvInitializeMCU(void)
  */
 void prvSystemClockConfig(void)
 {
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
+  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
+  __DSB();
+
   LL_FLASH_SetLatency(LL_FLASH_LATENCY_5);
   while(LL_FLASH_GetLatency() != LL_FLASH_LATENCY_5);
 
@@ -164,14 +166,7 @@ void prvSystemClockConfig(void)
   /* Wait till HSE is ready */
   while (!LL_RCC_HSE_IsReady());
 
-  LL_RCC_LSI_Enable();
-
-   /* Wait till LSI is ready */
-  while(LL_RCC_LSI_IsReady() != 1)
-
   LL_RCC_PLL_ConfigDomain_SYS(LL_RCC_PLLSOURCE_HSE, LL_RCC_PLLM_DIV_25, 336, LL_RCC_PLLP_DIV_2);
-  LL_RCC_PLL_ConfigDomain_48M(LL_RCC_PLLSOURCE_HSE, LL_RCC_PLLM_DIV_25, 336, LL_RCC_PLLQ_DIV_7);
-
   LL_RCC_PLL_Enable();
 
   /* Wait till PLL is ready */
@@ -190,33 +185,12 @@ void prvSystemClockConfig(void)
   LL_SYSTICK_SetClkSource(LL_SYSTICK_CLKSOURCE_HCLK);
   LL_SetSystemCoreClock(168000000);
 
-  NVIC_SetPriority(SysTick_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 15, 0));
+  NVIC_SetPriority(SysTick_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
   LL_SYSTICK_EnableIT();
 }
 /******************************************************************************/
 
 
-
-
-/**
- * @brief          System handler control and state register config
- */
-void prvSystemHandlerControlConfig(void)
-{
-  //TODO ask about this code
-  SCB->SHCSR |= SCB_SHCSR_MEMFAULTENA_Msk;
-  NVIC_SetPriority(MemoryManagement_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-
-  SCB->SHCSR |= SCB_SHCSR_BUSFAULTENA_Msk;
-  NVIC_SetPriority(BusFault_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-
-  SCB->SHCSR |= SCB_SHCSR_USGFAULTENA_Msk;
-  NVIC_SetPriority(UsageFault_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-
-  NVIC_SetPriority(SVCall_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-  NVIC_SetPriority(PendSV_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 3, 0));
-}
-/******************************************************************************/
 
 
 /**
@@ -228,7 +202,6 @@ void prvGPIOConfig(void)
   LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOA);
   LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOB);
   LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOC);
-  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOD);
   LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOH);
   __DSB();
 }
