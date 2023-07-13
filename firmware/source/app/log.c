@@ -15,19 +15,17 @@
 #include "log.h"
 
 #include "lwprintf/lwprintf.h"
+#include "io_uart.h"
 
 
 /******************************************************************************/
 /* Private defines ---------------------------------------------------------- */
 /******************************************************************************/
-#define LOGS_QUEUE_SIZE            (512U)
-#define CONSOLE_QUEUE_SIZE         (512U)
 
 
 /******************************************************************************/
 /* Private variables -------------------------------------------------------- */
 /******************************************************************************/
-static lwprintf_t logs;
 
 
 /******************************************************************************/
@@ -44,7 +42,7 @@ int prvLwprintfLogsOut(int ch, lwprintf_t* p);
  */
 void LogInit(void)
 {
-  lwprintf_init_ex(&logs, prvLwprintfLogsOut);
+  lwprintf_init(prvLwprintfLogsOut);
 }
 /******************************************************************************/
 
@@ -60,7 +58,7 @@ int PrintfLogs(const char *fmt, ...)
   int len;
 
   va_start(args, fmt);
-  len = lwprintf_vprintf_ex(&logs, fmt, args);
+  len = lwprintf_vprintf(fmt, args);
   va_end(args);
 
   return (len);
@@ -81,6 +79,7 @@ int prvLwprintfLogsOut(int ch, lwprintf_t* p)
     return ch;           //to prevent printing '0' in the end of any (char*)
   }
 
+  IoUartPutByte((uint8_t)ch);
   return (ch);
 }
 /******************************************************************************/
@@ -124,7 +123,7 @@ void LogPrintWelcomeMsg(void)
 {
   PrintfLogsCRLF(CLR_DEF"");
   PrintfLogsCRLF("");
-  PrintfLogsCRLF(CLR_MG"Welcome to ESS control board " CLR_GR"bootloader" CLR_RD "by AlexSH");
+  PrintfLogsCRLF(CLR_MG"ESS starting" CLR_GR"bootloader" CLR_RD "by AlexSH");
   PrintfLogsCRLF(CLR_DEF"");
   PrintfLogsCRLF("");
 }
