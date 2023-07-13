@@ -47,10 +47,6 @@ void IoUartInit(void)
   NVIC_SetPriority(IOUART_IRQn, 0x05);
   NVIC_EnableIRQ(IOUART_IRQn);
 
-  LL_USART_EnableIT_RXNE(IOUART_Periph);
-  LL_USART_EnableIT_ERROR(IOUART_Periph);
-  //LL_USART_EnableIT_IDLE(IOUART_Periph);
-
   USART_InitStruct.BaudRate            = 115200;
   USART_InitStruct.DataWidth           = LL_USART_DATAWIDTH_8B;
   USART_InitStruct.StopBits            = LL_USART_STOPBITS_1;
@@ -62,7 +58,6 @@ void IoUartInit(void)
 
   LL_USART_DisableIT_CTS(IOUART_Periph);
   LL_USART_ConfigAsyncMode(IOUART_Periph);
-
   LL_USART_Enable(IOUART_Periph);
 }
 /******************************************************************************/
