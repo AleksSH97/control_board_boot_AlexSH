@@ -32,11 +32,80 @@
 
 #include "lwprintf/lwprintf.h"
 
+/******************************************************************************/
+/* Private defines ---------------------------------------------------------- */
+/******************************************************************************/
+#define START_ADDRESS           (0x08008000) //Flash Sector 2 start address
+
+#define SRAM_SIZE               (128 * 1024) //128 Kbytes SRAM
+#define SRAM_END                (SRAM_BASE + SRAM_SIZE)
+
+#define FLASH_SIZE              (1024 * 1024)
+#define FLASH_SECTORS_2_TO_4    (3)
+#define FLASH_SECTOR_SIZE       (128 * 1024) // Sectors from 5 have 128 KBytes
+
+#define ENABLE_PROTECTION       (0u)
 
 /******************************************************************************/
 /* Private variables -------------------------------------------------------- */
 /******************************************************************************/
+typedef enum
+{
+  BOOTLOADER_OK = 0,                 /* No error                                 */
+  BOOTLOADER_ERROR_NO_APP,           /* No application found in flash            */
+  BOOTLOADER_ERROR_VERIFICATION,     /* Incorrect type of installing application */
+  BOOTLOADER_ERROR_CHECKSUM,         /* Application checksum match error         */
+  BOOTLOADER_ERROR_ERASE,            /* Flash erase error                        */
+  BOOTLOADER_ERROR_WRITE,            /* Flash write error                        */
+  BOOTLOADER_ERROR_OPTION_BYTES,     /* Flash option bytes programming error     */
+  BOOTLOADER_MAX_ERRORS              /* Reached maximum installing errors before */
+} BOOTLOADER_ERROR;
 
+typedef struct
+{
+  uint32_t magic_number;           /* Image random magic number                             */
+  uint8_t  reserved5;
+  uint8_t  header_version;         /* Header version                                        */
+  uint16_t firmware_version[7];    /* Firmware version                                      */
+  uint32_t firmware_length;        /* Firmware length without header & with 0xFF in the EOF */
+  uint32_t firmware_crc32;         /* Firmware CRC32 without header & with 0xFF in the EOF  */
+  uint32_t image_length;           /* Full image length with the header                     */
+} FIRMWARE_NOT_ENCRYPTED_HEADER;
+
+typedef struct
+{
+  uint32_t image_load_address;     /* Flash Sector 2 Address             */
+  uint32_t firmware_entry_point;   /* Flash Sector 2 Address + fw header */
+  uint32_t reserved1[64 / 4];      /* image_signature   (in future)      */
+  uint32_t reserved2;              /* option_flags      (in future)      */
+  uint32_t reserved3;
+  uint32_t reserved4;
+  uint32_t unused[3];              /* Used for align struct size for aes-128 (multiple of 16) */
+} FIRMWARE_ENCRYPTED_HEADER;
+
+typedef struct
+{
+  FIRMWARE_NOT_ENCRYPTED_HEADER not_encrypted_header;
+  FIRMWARE_ENCRYPTED_HEADER     encrypted_header;
+} FIRMWARE_HEADER;
+
+typedef struct
+{
+  uint32_t header_size_in_bytes;
+  uint32_t fw_size_in_4words;
+  uint32_t fw_size_in_words;
+  uint8_t  fw_tail_in_words;
+  uint8_t  fw_tail_in_bytes;
+  uint8_t  last_encrypted_fw_bytes;
+} FIRMWARE_SIZE;
+
+volatile FIRMWARE_SIZE fw_size;
+volatile FIRMWARE_HEADER fw_header;
+
+uint32_t flash_ptr; // Internal MCU Flash programming pointer
+
+uint8_t AES_KEY[] = { 0x4D, 0x61, 0x73, 0x74, 0x65, 0x72, 0x69, 0x6E,
+                      0x67, 0x20, 0x20, 0x53, 0x54, 0x4D, 0x33, 0x32 };
 
 /******************************************************************************/
 /* Private function prototypes ---------------------------------------------- */
