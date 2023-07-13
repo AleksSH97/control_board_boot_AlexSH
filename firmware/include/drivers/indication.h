@@ -91,16 +91,13 @@ extern mculed_t mculed[N_LED];
 /******************************************************************************/
 void IndicationInit(void);
 
-void IndicationLedYellow(void);
-void IndicationLedYellowBlink(uint8_t blinks);
+void IndicationLedYellow(uint8_t blinks);
 
-void IndicationLedGreen(void);
-void IndicationLedGreenBlink(uint8_t blinks);
+void IndicationLedGreen(uint8_t blinks);
 
 void IndicationLedLoading(void);
 
-void IndicationLedRed(void);
-void IndicationLedRedBlink(uint8_t blinks);
+void IndicationLedRed(uint8_t blinks);
 
 void IndicationLedButton(void);
 void IndicationLedReady(void);
