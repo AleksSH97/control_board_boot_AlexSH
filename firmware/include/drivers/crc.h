@@ -36,9 +36,9 @@ extern "C" {
 /******************************************************************************/
 /* Public functions --------------------------------------------------------- */
 /******************************************************************************/
-void CRC_Init(void);
-void CRC_Reset(void);
-uint32_t  CRC_CalculateCRC32(const void *pbuffer, size_t num_of_byte);
+void CRCInit(void);
+void CRCReset(void);
+uint32_t  CRCCalculate32(const void *pbuffer, size_t num_of_byte);
 
 
 /******************************************************************************/

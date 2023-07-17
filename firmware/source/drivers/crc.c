@@ -44,7 +44,7 @@
 /**
  * @brief          CRC peripheral init function
  */
-void CRC_Init(void)
+void CRCInit(void)
 {
   /* Peripheral clock enable */
   LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_CRC);
@@ -57,7 +57,7 @@ void CRC_Init(void)
  * @brief          This function resets the CRC peripheral and must be called before
  *                     each new CRC calculation
  */
-void CRC_Reset(void)
+void CRCReset(void)
 {
   LL_CRC_ResetCRCCalculationUnit(CRC);
 }
@@ -69,7 +69,7 @@ void CRC_Reset(void)
  * @brief          This function calculates checksum of input data in CRC peripheral
  * @return         Calculated CRC32 of input data
  */
-uint32_t CRC_CalculateCRC32(const void *pbuffer, size_t num_of_byte)
+uint32_t CRCCalculate32(const void *pbuffer, size_t num_of_byte)
 {
   uint32_t  last_data;
   uint8_t   *pbuf8  = (uint8_t*)pbuffer;
