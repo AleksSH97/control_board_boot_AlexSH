@@ -21,7 +21,11 @@
 #include "stm32f4xx_ll_bus.h"
 #include "stm32f4xx_ll_system.h"
 #include "stm32f4xx_ll_cortex.h"
+#include "stm32f4xx_ll_dma.h"
 #include "stm32f4xx_ll_utils.h"
+#include "stm32f4xx_ll_i2c.h"
+#include "stm32f4xx_ll_spi.h"
+#include "stm32f4xx_ll_crc.h"
 #include "stm32f4xx_ll_pwr.h"
 #include "stm32f4xx_ll_tim.h"
 #include "stm32f4xx_ll_gpio.h"
@@ -39,7 +43,7 @@
 /******************************************************************************/
 /* Private defines ---------------------------------------------------------- */
 /******************************************************************************/
-#define START_ADDRESS           (0x08008000) //Flash Sector 2 start address
+#define FW_START_ADDRESS           (0x08008000) //Flash Sector 2 start address
 
 #define SRAM_SIZE               (128 * 1024) //128 Kbytes SRAM
 #define SRAM_END                (SRAM_BASE + SRAM_SIZE)
@@ -124,7 +128,10 @@ bool prvCheckForInstall(bool new_fw);
 uint8_t prvInstallFW(bool new_fw);
 bool prvCheckInstallErrors(void);
 bool prvModifyFlagInFram(uint16_t flag_address, bool state);
+uint8_t prvCheckForApplication(void);
 
+void prvDeInitSystem(void);
+void prvDeInitGpios(void);
 
 /******************************************************************************/
 
@@ -239,6 +246,64 @@ uint8_t prvInstallFW(bool new_fw)
 
 
 /**
+ * @brief  This function checks whether a valid application exists in flash.
+ *         The check is performed by checking the very first DWORD (4 bytes) of
+ *         the application firmware. In case of a valid application, this DWORD
+ *         must represent the initialization location of stack pointer - which
+ *         must be within the boundaries of SRAM.
+ *         If application exists in flash, the function performs the jump to the firmware.
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ * @retval BOOTLOADER_OK: never reached due to jump to main firmware
+ * @retval BOOTLOADER_ERROR_NO_APP: if first DWORD value is not represent a valid stack pointer location
+ */
+uint8_t prvCheckForApplication(void)
+{
+  FIRMWARE_HEADER *pheader = (FIRMWARE_HEADER *)&fw_header;
+  memcpy(pheader, (uint32_t *)FW_START_ADDRESS, sizeof(FIRMWARE_HEADER));
+
+  if ((pheader->encrypted_header.firmware_entry_point > (FLASH_BASE + FLASH_SIZE)) ||
+      (pheader->encrypted_header.firmware_entry_point < FLASH_BASE))
+  {
+    return (BOOTLOADER_ERROR_NO_APP);
+  }
+
+  if (*((volatile uint32_t *) pheader->encrypted_header.firmware_entry_point) != SRAM_END)
+  {
+    return (BOOTLOADER_ERROR_NO_APP);
+  }
+  else
+  {
+    /*
+     * A valid program seems to exist in the third sector: we so prepare the MCU
+     * to start the main firmware
+     */
+    prvDeInitGpios();           /* Set GPIOs to default state */
+    SysTick->CTRL = 0x00;           /* Disable SysTick timer and its related interrupt */
+    SysTick->LOAD = 0x00;
+    SysTick->VAL  = 0x00;
+    prvDeInitSystem();                /* Set MCU peripherals to default state */
+
+    RCC->CIR = 0x00000000;          /* Disable all interrupts related to clock */
+    __set_MSP(*((volatile uint32_t *) pheader->encrypted_header.firmware_entry_point));
+
+    __DMB();                        /* ARM says to use a DMB instruction before relocating VTOR */
+    SCB->VTOR = pheader->encrypted_header.firmware_entry_point;
+    __DSB();                        /* ARM says to use a DSB instruction just after relocating VTOR */
+
+    /* We are now ready to jump to the main firmware */
+    uint32_t jump_address = *((volatile uint32_t *) (pheader->encrypted_header.firmware_entry_point + 4));
+    void (*jump_to_firmware)(void) = (void *)jump_address;
+    jump_to_firmware();
+  }
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
  * @brief  This function checks the OTA update flag or Backup restore flag in FRAM.
  * @retval bool: Install flag is set or reset
  */
@@ -246,12 +311,12 @@ bool prvCheckForInstall(bool new_fw)
 {
   uint8_t update_flag;
 
-  FRAMReadByte(new_fw ? FRAM_OFFSET_OTA_FLAG: FRAM_OFFSET_BACKUP_FLAG, &update_flag);
+  FRAMReadByte(new_fw ? FRAM_OFFSET_OTA_FLAG : FRAM_OFFSET_BACKUP_FLAG, &update_flag);
 
   if (update_flag == 0x01)
-    return (true);
+    return true;
   else
-    return (false);
+    return false;
 }
 /******************************************************************************/
 
@@ -271,9 +336,9 @@ bool prvCheckInstallErrors(void)
   FRAMReadByte(FRAM_OFFSET_INSTALL_ERRORS_COUNT, &errors_counter);
 
   if (errors_counter == 0x00)
-    return (true);
+    return true;
   else
-    return (false);
+    return false;
 }
 /******************************************************************************/
 
@@ -374,6 +439,56 @@ void prvGPIOConfig(void)
 }
 /******************************************************************************/
 
+
+
+
+/**
+ * @brief  De-initialize used GPIO registers function
+ * @param  None
+ * @retval None
+ */
+void prvDeInitGpios(void)
+{
+  LL_GPIO_DeInit(GPIOA);
+  LL_GPIO_DeInit(GPIOB);
+  LL_GPIO_DeInit(GPIOC);
+  LL_GPIO_DeInit(GPIOH);
+  __DSB();
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  De-initialize system devices function
+ * @param  None
+ * @retval None
+ */
+void prvDeInitSystem(void)
+{
+  /* Reset of all peripherals */
+  HAL_DeInit();
+  LL_DMA_DeInit(DMA2, LL_DMA_STREAM_0);
+  LL_DMA_DeInit(DMA2, LL_DMA_STREAM_3);
+  LL_USART_DeInit(UART4);
+  LL_I2C_DeInit(I2C1);
+  LL_SPI_DeInit(SPI1);
+  LL_CRC_DeInit(CRC);
+  LL_PWR_DeInit();
+
+  /* Disable all peripherals */
+  RCC->APB1ENR = 0x00000000;
+  RCC->APB2ENR = 0x00000000;
+  RCC->AHB1ENR = 0x00100000;
+  RCC->AHB2ENR = 0x00000000;
+  RCC->AHB3ENR = 0x00000000;
+  __DSB();
+
+  /* Reset the clocks to the default reset state */
+  LL_RCC_DeInit();
+}
+/******************************************************************************/
 
 
 
