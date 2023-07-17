@@ -43,7 +43,7 @@
 /******************************************************************************/
 /* Private defines ---------------------------------------------------------- */
 /******************************************************************************/
-#define FW_START_ADDRESS           (0x08008000) //Flash Sector 2 start address
+#define FW_START_ADDRESS        (0x08008000) //Flash Sector 2 start address
 
 #define SRAM_SIZE               (128 * 1024) //128 Kbytes SRAM
 #define SRAM_END                (SRAM_BASE + SRAM_SIZE)
@@ -54,8 +54,10 @@
 
 #define ENABLE_PROTECTION       (0u)
 
-#define NEW_FIRMWARE                  (true)
-#define BACKUP_FIRMWARE               (false)
+#define NEW_FIRMWARE            (true)
+#define BACKUP_FIRMWARE         (false)
+
+#define IMAGE_MAGIC_NUMBER      (0x414C4558) // Magic number: 'A' 'L' 'E' 'X' on ASCII
 
 /******************************************************************************/
 /* Private variables -------------------------------------------------------- */
@@ -68,6 +70,7 @@ typedef enum
   BOOTLOADER_ERROR_CHECKSUM,         /* Application checksum match error         */
   BOOTLOADER_ERROR_ERASE,            /* Flash erase error                        */
   BOOTLOADER_ERROR_WRITE,            /* Flash write error                        */
+  BOOTLOADER_ERROR_DECREMENT,
   BOOTLOADER_ERROR_OPTION_BYTES,     /* Flash option bytes programming error     */
   BOOTLOADER_MAX_ERRORS              /* Reached maximum installing errors before */
 } BOOTLOADER_ERROR;
@@ -124,14 +127,19 @@ uint8_t AES_KEY[] = { 0x4D, 0x61, 0x73, 0x74, 0x65, 0x72, 0x69, 0x6E,
 void prvInitializeSystem(void);
 void prvSystemClockConfig(void);
 void prvGPIOConfig(void);
-bool prvCheckForInstall(bool new_fw);
-uint8_t prvInstallFW(bool new_fw);
-bool prvCheckInstallErrors(void);
+
 bool prvModifyFlagInFram(uint16_t flag_address, bool state);
+uint8_t prvDecrementInstallErrorsCountInFram(void);
+
+uint8_t prvInstallFW(bool new_fw);
+uint8_t prvVerifyFW(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader);
+bool prvCheckForInstall(bool new_fw);
+bool prvCheckInstallErrors(void);
 uint8_t prvCheckForApplication(void);
 
 void prvDeInitSystem(void);
 void prvDeInitGpios(void);
+
 
 /******************************************************************************/
 
@@ -238,6 +246,9 @@ uint8_t prvInstallFW(bool new_fw)
                      (void *)pheader,
                      sizeof(FIRMWARE_HEADER));
 
+  // Verifying firmware
+  prvVerifyFW(pneheader);
+
   return BOOTLOADER_OK;
 }
 /******************************************************************************/
@@ -283,7 +294,7 @@ uint8_t prvCheckForApplication(void)
     SysTick->VAL  = 0x00;
     prvDeInitSystem();                /* Set MCU peripherals to default state */
 
-    RCC->CIR = 0x00000000;          /* Disable all interrupts related to clock */
+    RCC->CIR = 0x00000000;           /* Disable all interrupts related to clock */
     __set_MSP(*((volatile uint32_t *) pheader->encrypted_header.firmware_entry_point));
 
     __DMB();                        /* ARM says to use a DMB instruction before relocating VTOR */
@@ -346,6 +357,29 @@ bool prvCheckInstallErrors(void)
 
 
 /**
+ * @brief  This function verifies FW.
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ */
+uint8_t prvVerifyFW(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader)
+{
+  if (pneheader->magic_number != IMAGE_MAGIC_NUMBER)
+  {
+    PrintfLogsCRLF("FW image is not correct");
+
+    if(prvDecrementInstallErrorsCountInFram())
+      return BOOTLOADER_ERROR_DECREMENT;
+
+    return BOOTLOADER_ERROR_VERIFICATION;
+  }
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
  * @brief  This function modifies one of the 3 flags in FRAM
  *         used by the bootloader
  * @retval bool: success or not
@@ -363,7 +397,6 @@ bool prvModifyFlagInFram(uint16_t flag_address, bool state)
   FRAMWriteByte(flag_address, state);
   FRAMWriteByte(flag_address, state);
 
-
   /* Make sure the flag has cleared */
   FRAMReadByte(flag_address, &flag);
   if (flag != state)
@@ -373,6 +406,41 @@ bool prvModifyFlagInFram(uint16_t flag_address, bool state)
   }
 
   return true;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function decrements error counter in FRAM
+ *         if an error occurs while installing the firmware.
+ * @retval bool: success or not
+ */
+uint8_t prvDecrementInstallErrorsCountInFram(void)
+{
+  uint8_t errors_counter = 0x00;
+  uint8_t tmp = 0x00;
+
+  FRAMReadByte(FRAM_OFFSET_INSTALL_ERRORS_COUNT, &errors_counter);
+
+  if (errors_counter != 0x00)
+  {
+    errors_counter--;
+
+    /* See prvModifyFlagInFram() for description of this problem */
+    FRAMWriteByte(FRAM_OFFSET_INSTALL_ERRORS_COUNT, errors_counter);
+    FRAMWriteByte(FRAM_OFFSET_INSTALL_ERRORS_COUNT, errors_counter);
+
+    tmp = errors_counter;
+
+    /* Make sure the flag has cleared */
+    FRAMReadByte(FRAM_OFFSET_INSTALL_ERRORS_COUNT, &errors_counter);
+    if (errors_counter != tmp)
+      return BOOTLOADER_ERROR_DECREMENT;
+  }
+
+  return BOOTLOADER_OK;
 }
 /******************************************************************************/
 
