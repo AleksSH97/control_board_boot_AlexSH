@@ -32,6 +32,7 @@
 #include "crc.h"
 #include "io_uart.h"
 #include "fram.h"
+#include "ext_flash.h"
 
 #include "lwprintf/lwprintf.h"
 
@@ -48,6 +49,9 @@
 #define FLASH_SECTOR_SIZE       (128 * 1024) // Sectors from 5 have 128 KBytes
 
 #define ENABLE_PROTECTION       (0u)
+
+#define NEW_FIRMWARE                  (true)
+#define BACKUP_FIRMWARE               (false)
 
 /******************************************************************************/
 /* Private variables -------------------------------------------------------- */
@@ -116,6 +120,10 @@ uint8_t AES_KEY[] = { 0x4D, 0x61, 0x73, 0x74, 0x65, 0x72, 0x69, 0x6E,
 void prvInitializeSystem(void);
 void prvSystemClockConfig(void);
 void prvGPIOConfig(void);
+bool prvCheckForInstall(bool new_fw);
+uint8_t prvInstallFW(bool new_fw);
+bool prvCheckInstallErrors(void);
+bool prvModifyFlagInFram(uint16_t flag_address, bool state);
 
 
 /******************************************************************************/
@@ -149,10 +157,157 @@ void prvInitializeMCU(void)
   FRAMInit();
   LogInit();
 
-  if (!ExtFlash_Init())
-    if (!ExtFlash_Init())
-      if (!ExtFlash_Init())
-        Printf_LogCRLF("Flash ERROR!!!");
+  if (!ExtFlashInit())
+    if (!ExtFlashInit())
+      if (!ExtFlashInit())
+        PrintfLogsCRLF("Flash ERROR!!!");
+
+
+#if ENABLE_MCU_PROTECTIONS
+  prvCheckAndSetFlashProtection();
+#endif
+
+  PrintfLogsCRLF("ESS control board booting...");
+
+  /* Bootloader execution: check for update flags in FRAM or jump to main application */
+  if (prvCheckForInstall(NEW_FIRMWARE))
+  {
+    if (prvInstallFW(NEW_FIRMWARE) != BOOTLOADER_OK)
+      NVIC_SystemReset();
+  }
+  else if (prvCheckForInstall(BACKUP_FIRMWARE))
+  {
+    if (prvInstallFW(BACKUP_FIRMWARE) != BOOTLOADER_OK)
+      NVIC_SystemReset();
+  }
+  else
+  {
+    /*
+     * Flags are not set in FRAM. We first check if the firmware_entry_point address field
+     * of image header starting from FW_START_ADDRESS contains the MSP (end of SRAM).
+     * If not, the Red LED blinks quickly.
+     */
+    if (prvCheckForApplication() == BOOTLOADER_ERROR_NO_APP)
+    {
+      PrintfLogsCRLF("ERROR: firmware is not found!");
+      IndicationLedRed(5);
+
+      while(1)
+      {
+      }
+    }
+  }
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function installs new or backup firmware.
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ */
+uint8_t prvInstallFW(bool new_fw)
+{
+  FIRMWARE_HEADER *pheader = (FIRMWARE_HEADER *)&fw_header;
+  FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader = (FIRMWARE_NOT_ENCRYPTED_HEADER *)&pheader->not_encrypted_header;
+
+  if (prvCheckInstallErrors())
+  {
+    prvModifyFlagInFram(new_fw ? FRAM_OFFSET_OTA_FLAG : FRAM_OFFSET_BACKUP_FLAG, RESET);
+    prvModifyFlagInFram(new_fw ? FRAM_OFFSET_SUCCESS_OTA_INSTALL_FLAG : FRAM_OFFSET_SUCCESS_BACKUP_INSTALL_FLAG, RESET);
+
+    return BOOTLOADER_MAX_ERRORS;
+  }
+
+  if (new_fw)
+    PrintfLogsCRLF("Installing new update...");
+  else
+    PrintfLogsCRLF("Restoring firmware...");
+
+  //Get FW header from external flash
+  ExtFlashReadArray(SELECT_FAST_READ,
+                     new_fw ? NEW_FW_HEADER_ADDRESS: BACKUP_FW_HEADER_ADDRESS,
+                     (void *)pheader,
+                     sizeof(FIRMWARE_HEADER));
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function checks the OTA update flag or Backup restore flag in FRAM.
+ * @retval bool: Install flag is set or reset
+ */
+bool prvCheckForInstall(bool new_fw)
+{
+  uint8_t update_flag;
+
+  FRAMReadByte(new_fw ? FRAM_OFFSET_OTA_FLAG: FRAM_OFFSET_BACKUP_FLAG, &update_flag);
+
+  if (update_flag == 0x01)
+    return (true);
+  else
+    return (false);
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function checks if the install error counter has reached 0 or not
+ * @retval bool: true  if the max number of install errors has been reached
+ *                     (error counter = 0);
+ *               false if install errors counter != 0
+ */
+bool prvCheckInstallErrors(void)
+{
+  uint8_t errors_counter = 0x00;
+
+  FRAMReadByte(FRAM_OFFSET_INSTALL_ERRORS_COUNT, &errors_counter);
+
+  if (errors_counter == 0x00)
+    return (true);
+  else
+    return (false);
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function modifies one of the 3 flags in FRAM
+ *         used by the bootloader
+ * @retval bool: success or not
+ */
+bool prvModifyFlagInFram(uint16_t flag_address, bool state)
+{
+  uint8_t flag = 0x02;           /* true/false != 0x02 */
+
+  /*
+   * Modify Update Flag in FRAM
+   * Temporary solution. It is necessary to call two functions, since the "last function"
+   * for some unknown reason sends a NACK at the end. The functions BEFORE the "last
+   * function" work correctly. See signal via logic analyzer
+   */
+  FRAMWriteByte(flag_address, state);
+  FRAMWriteByte(flag_address, state);
+
+
+  /* Make sure the flag has cleared */
+  FRAMReadByte(flag_address, &flag);
+  if (flag != state)
+  {
+    PrintfLogsCRLF("ERROR: Bootloader's flag in FRAM is not modified!");
+    return false;
+  }
+
+  return true;
 }
 /******************************************************************************/
 
