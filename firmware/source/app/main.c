@@ -128,6 +128,8 @@ void prvInitializeSystem(void);
 void prvSystemClockConfig(void);
 void prvGPIOConfig(void);
 
+bool prvExtFlashInit(void);
+
 bool prvModifyFlagInFram(uint16_t flag_address, bool state);
 uint8_t prvDecrementInstallErrorsCountInFram(void);
 
@@ -172,11 +174,8 @@ void prvInitializeMCU(void)
   FRAMInit();
   LogInit();
 
-  if (!ExtFlashInit())
-    if (!ExtFlashInit())
-      if (!ExtFlashInit())
-        PrintfLogsCRLF("Flash ERROR!!!");
-
+  if(!prvExtFlashInit())
+    PrintfLogsCRLF("Flash ERROR!!!");
 
 #if ENABLE_MCU_PROTECTIONS
   prvCheckAndSetFlashProtection();
@@ -224,6 +223,7 @@ void prvInitializeMCU(void)
  */
 uint8_t prvInstallFW(bool new_fw)
 {
+  uint8_t res = BOOTLOADER_OK;
   FIRMWARE_HEADER *pheader = (FIRMWARE_HEADER *)&fw_header;
   FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader = (FIRMWARE_NOT_ENCRYPTED_HEADER *)&pheader->not_encrypted_header;
 
@@ -240,14 +240,17 @@ uint8_t prvInstallFW(bool new_fw)
   else
     PrintfLogsCRLF("Restoring firmware...");
 
-  //Get FW header from external flash
+  // Get FW header from external flash
   ExtFlashReadArray(SELECT_FAST_READ,
                      new_fw ? NEW_FW_HEADER_ADDRESS: BACKUP_FW_HEADER_ADDRESS,
                      (void *)pheader,
                      sizeof(FIRMWARE_HEADER));
 
   // Verifying firmware
-  prvVerifyFW(pneheader);
+  res = prvVerifyFW(pneheader);
+
+  if (res != BOOTLOADER_OK)
+    return res;
 
   return BOOTLOADER_OK;
 }
@@ -415,7 +418,7 @@ bool prvModifyFlagInFram(uint16_t flag_address, bool state)
 /**
  * @brief  This function decrements error counter in FRAM
  *         if an error occurs while installing the firmware.
- * @retval bool: success or not
+ * @retval Bootloader error code ::BOOTLOADER_ERROR_CODE
  */
 uint8_t prvDecrementInstallErrorsCountInFram(void)
 {
@@ -441,6 +444,25 @@ uint8_t prvDecrementInstallErrorsCountInFram(void)
   }
 
   return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function tries to init FLASH three times
+ *         because sometimes prints error of FLASH and flash works correctly
+ * @retval bool: success or not
+ */
+bool prvExtFlashInit(void)
+{
+  if (!ExtFlashInit())
+    if (!ExtFlashInit())
+      if (!ExtFlashInit())
+        return false;
+
+  return true;
 }
 /******************************************************************************/
 
