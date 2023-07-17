@@ -29,6 +29,9 @@
 #include "led.h"
 #include "indication.h"
 #include "log.h"
+#include "crc.h"
+#include "io_uart.h"
+#include "fram.h"
 
 #include "lwprintf/lwprintf.h"
 
@@ -141,6 +144,15 @@ void prvInitializeMCU(void)
   prvSystemClockConfig();
   prvGPIOConfig();
   IndicationInit();
+  CRCInit();
+  IoUartInit();
+  FRAMInit();
+  LogInit();
+
+  if (!ExtFlash_Init())
+    if (!ExtFlash_Init())
+      if (!ExtFlash_Init())
+        Printf_LogCRLF("Flash ERROR!!!");
 }
 /******************************************************************************/
 
@@ -297,24 +309,7 @@ void DebugMon_Handler(void)
  */
 void SysTick_Handler(void)
 {
-  /* Clear overflow flag */
-//  SysTick->CTRL;
-  /* Check leds status */
+  HAL_IncTick();
   IndicationLedsUpdate();
-
-#if (INCLUDE_xTaskGetSchedulerState == 1 )
-if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
-{
-#endif /* INCLUDE_xTaskGetSchedulerState */
-  xPortSysTickHandler();
-#if (INCLUDE_xTaskGetSchedulerState == 1 )
-}
-#endif /* INCLUDE_xTaskGetSchedulerState */
 }
 /******************************************************************************/
-
-
-
-
-
-
