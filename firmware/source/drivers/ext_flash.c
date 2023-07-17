@@ -22,6 +22,7 @@
 #include "stm32f4xx_ll_spi.h"
 
 #include "ext_flash.h"
+#include "flash_spi.h"
 
 
 /******************************************************************************/
