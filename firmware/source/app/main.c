@@ -150,6 +150,7 @@ uint8_t prvCheckForApplication(void);
 
 void prvDecryptPartOfHeader(FIRMWARE_HEADER * const pheader);
 void prvPrintHeader(const FIRMWARE_HEADER *pheader);
+void prvFillFWSize(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader);
 
 void prvDeInitSystem(void);
 void prvDeInitGpios(void);
@@ -267,7 +268,11 @@ uint8_t prvInstallFW(bool new_fw)
   // Decrypt encrypted part of the header
   prvDecryptPartOfHeader(pheader);
 
+  // Printf info about decrypted header
   prvPrintHeader(pheader);
+
+  // Fill FIRMWARE SIZE struct for calculations
+  prvFillFWSize(pneheader);
 
   return BOOTLOADER_OK;
 }
@@ -504,7 +509,7 @@ void prvPrintHeader(const FIRMWARE_HEADER *pheader)
   FIRMWARE_NOT_ENCRYPTED_HEADER *ptr_not_encrypted = (FIRMWARE_NOT_ENCRYPTED_HEADER *)&pheader->not_encrypted_header;
   FIRMWARE_ENCRYPTED_HEADER *ptr_encrypted = (FIRMWARE_ENCRYPTED_HEADER *)&pheader->encrypted_header;
 
-  PrintfLogsCont("Image Type \t:BOARD IMAGE HW %d.%d SW %d.%d.%d-",
+  PrintfLogsCont("BOARD IMAGE HW %d.%d SW %d.%d.%d-",
       ptr_not_encrypted->firmware_version[0],
       ptr_not_encrypted->firmware_version[1],
       ptr_not_encrypted->firmware_version[2],
@@ -521,6 +526,25 @@ void prvPrintHeader(const FIRMWARE_HEADER *pheader)
   PrintfLogsCRLF("CRC32 Checksum       : 0x%08lX"  , ptr_not_encrypted->firmware_crc32);
   PrintfLogsCRLF("Image Load Address   : 0x%08lX"  , ptr_encrypted->image_load_address);
   PrintfLogsCRLF("Firmware Entry Point : 0x%08lX"  , ptr_encrypted->firmware_entry_point);
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function fills FIRMWARE_SIZE struct for calculations
+ * @param  pneheader: pointer to header struct ::FIRMWARE_NOT_ENCRYPTED_HEADER
+ * @retval None
+ */
+void prvFillFWSize(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader)
+{
+  fw_size.header_size_in_bytes = pneheader->image_length - pneheader->firmware_length;
+  fw_size.fw_size_in_4words = pneheader->firmware_length >> 4;
+  fw_size.fw_size_in_words = pneheader->firmware_length >>2;
+  fw_size.fw_tail_in_words = fw_size.fw_size_in_words % 4;
+  fw_size.fw_tail_in_bytes = pneheader->firmware_length & 3;
+  fw_size.last_encrypted_fw_bytes = (fw_size.fw_tail_in_words << 2) + fw_size.fw_tail_in_bytes;
 }
 /******************************************************************************/
 
