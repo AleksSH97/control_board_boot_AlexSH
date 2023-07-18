@@ -274,6 +274,14 @@ uint8_t prvInstallFW(bool new_fw)
   // Fill FIRMWARE SIZE struct for calculations
   prvFillFWSize(pneheader);
 
+  PrintfLogsCRLF("Checking CRC32 of the firmware");
+  if (prvCheckFWCRC32(new_fw ? true : false, pheader) == BOOTLOADER_ERROR_CHECKSUM)
+  {
+    PrintfLogsCRLF("ERROR: Calculated CRC32 is not matches the one in the image header!");
+    prvDecrementInstallErrorsCountInFram();
+    return BOOTLOADER_ERROR_CHECKSUM;
+  }
+
   return BOOTLOADER_OK;
 }
 /******************************************************************************/
@@ -425,6 +433,66 @@ uint8_t prvVerifyFW(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader)
   }
 
   return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function checks CRC32 of selected fw in external Flash.
+ * @retval BOOTLOADER_OK: Calculated CRC32 matches the one in the image header
+ * @retval BOOTLOADER_ERROR_CHECKSUM: upon failure
+ */
+uint8_t prvCheckFwCRC(bool new_fw, const FIRMWARE_HEADER *pheader)
+{
+  FIRMWARE_NOT_ENCRYPTED_HEADER *ptr = (FIRMWARE_NOT_ENCRYPTED_HEADER *)&pheader->not_encrypted_header;
+
+  uint32_t calculated_crc;
+  uint8_t  fw_buf[16];
+
+  struct AES_ctx ctx_crc;
+  AES_init_ctx_iv(&ctx_crc, aes_fw_key, aes_init_vector);
+
+  calculated_crc = 0;
+
+
+  /* Reset CRC peripheral before starting calculation */
+  CRCReset();
+
+
+  /* Calculate CRC of fw words and fw tail bytes if it exists */
+  uint32_t i;
+  for (i = 0; i < fw_size.fw_size_in_4words; i++)
+  {
+    ExtFlashReadArray(SELECT_FAST_READ,
+                       ((new_fw ? NEW_FW_ADDRESS: BACKUP_FW_ADDRESS) + (i * sizeof(fw_buf))),
+                       (void *)fw_buf, sizeof(fw_buf));
+
+    /* Decrypting the firmware block */
+    AES_CBC_decrypt_buffer(&ctx_crc, (uint8_t *)&fw_buf, sizeof(fw_buf));
+
+    calculated_crc = CRCCalculate32(fw_buf, sizeof(fw_buf));
+  }
+
+  /* Calculating the CRC of encrypted firmware tail, which is mixed with encrypted 0xFF alignment bytes */
+  if (fw_size.last_encrypted_fw_bytes != 0)
+  {
+    ExtFlashReadArray(SELECT_FAST_READ,
+                       ((new_fw ? NEW_FW_ADDRESS: BACKUP_FW_ADDRESS) + (i * sizeof(fw_buf))),
+                       (void *)fw_buf, sizeof(fw_buf));
+
+    AES_CBC_decrypt_buffer(&ctx_crc, (uint8_t *)&fw_buf, sizeof(fw_buf));
+
+    calculated_crc = CRCCalculate32(fw_buf, fw_size.last_encrypted_fw_bytes);
+  }
+
+
+  /* Compare calculated CRC with CRC from image header */
+  if (calculated_crc == ptr->firmware_crc32)
+    return BOOTLOADER_OK;
+  else
+    return BOOTLOADER_ERROR_CHECKSUM;
 }
 /******************************************************************************/
 
