@@ -38,6 +38,8 @@
 #include "fram.h"
 #include "ext_flash.h"
 
+#include "aes.h"
+
 #include "lwprintf/lwprintf.h"
 
 /******************************************************************************/
@@ -58,6 +60,12 @@
 #define BACKUP_FIRMWARE         (false)
 
 #define IMAGE_MAGIC_NUMBER      (0x414C4558) // Magic number: 'A' 'L' 'E' 'X' on ASCII
+
+uint8_t aes_fw_key[] = { 0x42, 0x26, 0x45, 0x29, 0x48, 0x2B, 0x4D, 0x62,
+                    0x51, 0x65, 0x54, 0x68, 0x57, 0x6D, 0x5A, 0x71  };
+
+uint8_t aes_init_vector[]     = { 0x24, 0x62, 0x54, 0x92, 0x84, 0xB2, 0xD4, 0x26,
+                    0x15, 0x56, 0x45, 0x86, 0x75, 0xD6, 0xA5, 0x17  };
 
 /******************************************************************************/
 /* Private variables -------------------------------------------------------- */
@@ -139,6 +147,7 @@ bool prvCheckForInstall(bool new_fw);
 bool prvCheckInstallErrors(void);
 uint8_t prvCheckForApplication(void);
 
+void prvDecryptPartOfHeader(FIRMWARE_HEADER * const pheader);
 void prvDeInitSystem(void);
 void prvDeInitGpios(void);
 
@@ -242,7 +251,7 @@ uint8_t prvInstallFW(bool new_fw)
 
   // Get FW header from external flash
   ExtFlashReadArray(SELECT_FAST_READ,
-                     new_fw ? NEW_FW_HEADER_ADDRESS: BACKUP_FW_HEADER_ADDRESS,
+                     new_fw ? NEW_FW_HEADER_ADDRESS : BACKUP_FW_HEADER_ADDRESS,
                      (void *)pheader,
                      sizeof(FIRMWARE_HEADER));
 
@@ -252,6 +261,8 @@ uint8_t prvInstallFW(bool new_fw)
   if (res != BOOTLOADER_OK)
     return res;
 
+  // Decrypt encrypted part of the header
+  prvDecryptPartOfHeader(pheader);
   return BOOTLOADER_OK;
 }
 /******************************************************************************/
@@ -331,6 +342,33 @@ bool prvCheckForInstall(bool new_fw)
     return true;
   else
     return false;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function decrypts the encrypted part of the header and fills
+ *         the FIRMWARE_HEADER struct with the decrypted data.
+ * @retval None
+ */
+void prvDecryptPartOfHeader(FIRMWARE_HEADER * const pheader)
+{
+  uint8_t fw_buf[16];
+
+  struct AES_ctx ctx;
+  AES_init_ctx_iv(&ctx, aes_fw_key, aes_init_vector);
+
+  uint8_t *ptr = (uint8_t)&pheader->encrypted_header;
+  uint16_t header_encrypt_4w_size = (sizeof(FIRMWARE_HEADER) - sizeof(FIRMWARE_NOT_ENCRYPTED_HEADER)) >> 4;
+  for (uint32_t i = 0; i < header_encrypt_4w_size; i++)
+  {
+    memcpy(fw_buf, ptr, 16);
+    AES_CBC_decrypt_buffer(&ctx, (uint8_t *)&fw_buf, sizeof(fw_buf));
+    memcpy(ptr, fw_buf, 16);
+    ptr += 16;
+  }
 }
 /******************************************************************************/
 
