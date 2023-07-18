@@ -61,6 +61,7 @@
 
 #define IMAGE_MAGIC_NUMBER      (0x414C4558) // Magic number: 'A' 'L' 'E' 'X' on ASCII
 
+/* Crypto key (0xAB, 0xCD, ...) and it's initialization vector (0xBA, 0xDC, ...) */
 uint8_t aes_fw_key[] = { 0x42, 0x26, 0x45, 0x29, 0x48, 0x2B, 0x4D, 0x62,
                     0x51, 0x65, 0x54, 0x68, 0x57, 0x6D, 0x5A, 0x71  };
 
@@ -148,6 +149,8 @@ bool prvCheckInstallErrors(void);
 uint8_t prvCheckForApplication(void);
 
 void prvDecryptPartOfHeader(FIRMWARE_HEADER * const pheader);
+void prvPrintHeader(const FIRMWARE_HEADER *pheader);
+
 void prvDeInitSystem(void);
 void prvDeInitGpios(void);
 
@@ -263,6 +266,9 @@ uint8_t prvInstallFW(bool new_fw)
 
   // Decrypt encrypted part of the header
   prvDecryptPartOfHeader(pheader);
+
+  prvPrintHeader(pheader);
+
   return BOOTLOADER_OK;
 }
 /******************************************************************************/
@@ -482,6 +488,39 @@ uint8_t prvDecrementInstallErrorsCountInFram(void)
   }
 
   return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function prints image information from header
+ * @param  pheader: pointer to header struct ::FIRMWARE_HEADER
+ * @retval None
+ */
+void prvPrintHeader(const FIRMWARE_HEADER *pheader)
+{
+  FIRMWARE_NOT_ENCRYPTED_HEADER *ptr_not_encrypted = (FIRMWARE_NOT_ENCRYPTED_HEADER *)&pheader->not_encrypted_header;
+  FIRMWARE_ENCRYPTED_HEADER *ptr_encrypted = (FIRMWARE_ENCRYPTED_HEADER *)&pheader->encrypted_header;
+
+  PrintfLogsCont("Image Type \t:BOARD IMAGE HW %d.%d SW %d.%d.%d-",
+      ptr_not_encrypted->firmware_version[0],
+      ptr_not_encrypted->firmware_version[1],
+      ptr_not_encrypted->firmware_version[2],
+      ptr_not_encrypted->firmware_version[3],
+      ptr_not_encrypted->firmware_version[4]);
+
+  if (ptr_not_encrypted->firmware_version[5] != 0)
+    PrintfLogsCont("RC%d.", ptr_not_encrypted->firmware_version[5]);
+
+  PrintfLogsCRLF("%d", ptr_not_encrypted->firmware_version[6]);
+
+  PrintfLogsCRLF("Full Image Size      : %lu bytes", ptr_not_encrypted->image_length);
+  PrintfLogsCRLF("Firmware Size        : %lu bytes", ptr_not_encrypted->firmware_length);
+  PrintfLogsCRLF("CRC32 Checksum       : 0x%08lX"  , ptr_not_encrypted->firmware_crc32);
+  PrintfLogsCRLF("Image Load Address   : 0x%08lX"  , ptr_encrypted->image_load_address);
+  PrintfLogsCRLF("Firmware Entry Point : 0x%08lX"  , ptr_encrypted->firmware_entry_point);
 }
 /******************************************************************************/
 
