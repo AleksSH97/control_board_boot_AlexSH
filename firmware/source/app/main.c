@@ -151,6 +151,13 @@ uint8_t prvCheckForApplication(void);
 void prvDecryptPartOfHeader(FIRMWARE_HEADER * const pheader);
 void prvPrintHeader(const FIRMWARE_HEADER *pheader);
 void prvFillFWSize(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader);
+uint8_t prvCheckFwCRC(bool new_fw, const FIRMWARE_HEADER *pheader);
+
+uint8_t prvProgramFwToMcuFlash(bool new_fw, FIRMWARE_HEADER * const pheader);
+uint8_t prvEraseMcuFlash(const FIRMWARE_HEADER *pheader);
+uint8_t prvBeginProgramMcuFlash(const FIRMWARE_HEADER *pheader);
+uint8_t prvNextProgramMcuFlash(const FIRMWARE_HEADER *pheader, void *data);
+uint8_t prvEndProgramMcuFlash(void);
 
 void prvDeInitSystem(void);
 void prvDeInitGpios(void);
@@ -274,12 +281,45 @@ uint8_t prvInstallFW(bool new_fw)
   // Fill FIRMWARE SIZE struct for calculations
   prvFillFWSize(pneheader);
 
-  PrintfLogsCRLF("Checking CRC32 of the firmware");
-  if (prvCheckFWCRC32(new_fw ? true : false, pheader) == BOOTLOADER_ERROR_CHECKSUM)
+  // Check CRC32
+  PrintfLogsCRLF("Checking CRC32 of the firmware...");
+  if (prvCheckFwCRC(new_fw ? true : false, pheader) == BOOTLOADER_ERROR_CHECKSUM)
   {
-    PrintfLogsCRLF("ERROR: Calculated CRC32 is not matches the one in the image header!");
+    PrintfLogsCRLF(CLR_RD"ERROR: Calculated CRC32 is not matches the one in the image header!"CLR_DEF);
     prvDecrementInstallErrorsCountInFram();
     return BOOTLOADER_ERROR_CHECKSUM;
+  }
+  PrintfLogsCRLF(CLR_GR"OK"CLR_DEF);
+
+  // Erase FLASH before programming
+  PrintfLogsCRLF("Erasing MCU Flash...");
+  if (prvEraseMcuFlash(pheader) == BOOTLOADER_ERROR_ERASE)
+  {
+    PrintfLogsCRLF(CLR_RD"ERROR: STM32 Flash erase fail!"CLR_DEF);
+    prvDecrementInstallErrorsCountInFram();
+
+    return BOOTLOADER_ERROR_ERASE;
+  }
+  PrintfLogsCRLF(CLR_GR"OK"CLR_DEF);
+
+  // Install firmware to STM32 flash
+  PrintfLogsCRLF("Installing firmware...");
+  if (prvProgramFwToMcuFlash(new_fw ? true : false, pheader) == BOOTLOADER_ERROR_WRITE)
+  {
+    prvDecrementInstallErrorsCountInFram();
+
+    return (BOOTLOADER_ERROR_WRITE);
+  }
+  PrintfLogsCRLF(CLR_GR"OK"CLR_DEF);
+
+  // Ending of the firmware installing
+  if (prvModifyFlagInFram(new_fw ? FRAM_OFFSET_OTA_FLAG : FRAM_OFFSET_BACKUP_FLAG, RESET))
+  {
+    // Set Success Install Flag for main firmware
+    prvModifyFlagInFram(new_fw ? FRAM_OFFSET_SUCCESS_OTA_INSTALL_FLAG : FRAM_OFFSET_SUCCESS_BACKUP_INSTALL_FLAG, SET);
+
+    // Reset board
+    NVIC_SystemReset();
   }
 
   return BOOTLOADER_OK;
@@ -379,7 +419,7 @@ void prvDecryptPartOfHeader(FIRMWARE_HEADER * const pheader)
   struct AES_ctx ctx;
   AES_init_ctx_iv(&ctx, aes_fw_key, aes_init_vector);
 
-  uint8_t *ptr = (uint8_t)&pheader->encrypted_header;
+  uint8_t *ptr = (uint8_t *)&pheader->encrypted_header;
   uint16_t header_encrypt_4w_size = (sizeof(FIRMWARE_HEADER) - sizeof(FIRMWARE_NOT_ENCRYPTED_HEADER)) >> 4;
   for (uint32_t i = 0; i < header_encrypt_4w_size; i++)
   {
@@ -431,6 +471,222 @@ uint8_t prvVerifyFW(FIRMWARE_NOT_ENCRYPTED_HEADER *pneheader)
 
     return BOOTLOADER_ERROR_VERIFICATION;
   }
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function erases needed sectors to program of internal Flash.
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ * @retval BOOTLOADER_OK: upon success
+ * @retval BOOTLOADER_ERROR_ERASE: upon failure
+ */
+uint8_t prvEraseMcuFlash(const FIRMWARE_HEADER *pheader)
+{
+  FIRMWARE_NOT_ENCRYPTED_HEADER *ptr = (FIRMWARE_NOT_ENCRYPTED_HEADER *)&pheader->not_encrypted_header;
+
+  uint32_t                    nbr_of_sectors = 0;
+  uint32_t                    sector_error = 0;
+  FLASH_EraseInitTypeDef      pEraseInit;
+  HAL_StatusTypeDef           status = HAL_OK;
+
+  HAL_FLASH_Unlock();
+
+  /* Get the number of sectors to erase */
+  if (ptr->image_length < (96 * 1024))      /* All sectors up to the fifth have a size other than 128 Kbytes */
+    nbr_of_sectors = FLASH_SECTORS_2_TO_4;  /* Erase them if image size < 96 Kbytes of sectors 2-4 */
+  else
+  {
+    uint32_t tail;
+    tail = ptr->image_length - (96 * 1024);
+
+    if (tail > 0)
+    {
+      nbr_of_sectors = FLASH_SECTORS_2_TO_4 + (tail / FLASH_SECTOR_SIZE);
+
+      if ((tail % FLASH_SECTOR_SIZE) != 0)
+        nbr_of_sectors += 1;
+    }
+  }
+
+  pEraseInit.TypeErase    = FLASH_TYPEERASE_SECTORS;
+  pEraseInit.Banks        = FLASH_BANK_1;
+  pEraseInit.Sector       = FLASH_SECTOR_2;
+  pEraseInit.NbSectors    = nbr_of_sectors;
+  pEraseInit.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+  status                  = HAL_FLASHEx_Erase(&pEraseInit, &sector_error);
+
+  HAL_FLASH_Lock();
+
+  return ((status == HAL_OK) ? BOOTLOADER_OK : BOOTLOADER_ERROR_ERASE);
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  This function programs the header and firmware into the MCU Flash.
+ *         Header confidential information is cleared before programming.
+ * @retval BL_OK: upon success
+ * @retval BL_ERROR_WRITE: upon failure
+ */
+uint8_t prvProgramFwToMcuFlash(bool new_fw, FIRMWARE_HEADER * const pheader)
+{
+  uint8_t fw_buf[16];
+  uint8_t *ptr_u8 = (uint8_t *)pheader;
+  FIRMWARE_HEADER     *ptr   = (FIRMWARE_HEADER *)pheader;
+  FIRMWARE_ENCRYPTED_HEADER *ptr_e = (FIRMWARE_ENCRYPTED_HEADER *)&pheader->encrypted_header;
+
+  struct AES_ctx ctx;
+  AES_init_ctx_iv(&ctx, aes_fw_key, aes_init_vector);
+
+  prvBeginProgramMcuFlash(ptr);
+
+  /* Installing the header */
+  memset(ptr_e->reserved1, 0, sizeof(ptr_e->reserved1));
+  ptr_e->reserved2 = 0;
+  ptr_e->reserved3 = 0;
+  ptr_e->reserved4 = 0;
+
+  for (uint32_t i = 0; i < (fw_size.header_size_in_bytes >> 4); i++)
+  {
+    if (i < (sizeof(FIRMWARE_HEADER) >> 4))
+      memcpy(fw_buf, ptr_u8, sizeof(fw_buf));
+    else
+      memset(fw_buf, 0, sizeof(fw_buf));
+
+    for (uint8_t j = 0; j < 4; j++)
+    {
+      /* Programming the decrypted firmware block */
+      if (prvNextProgramMcuFlash(ptr, (uint32_t *)&fw_buf[j * 4]) == BOOTLOADER_ERROR_WRITE)
+      {
+        PrintfLogsCRLF("ERROR: Failure to program the %luth 4word of the header!", i);
+        prvEndProgramMcuFlash();
+
+        return BOOTLOADER_ERROR_WRITE;
+      }
+    }
+
+    if (i < (sizeof(FIRMWARE_HEADER) >> 4))
+      ptr_u8 += 16;
+  }
+
+  /* Installing the firmware */
+  uint32_t i;
+  for (i = 0; i < fw_size.fw_size_in_4words; i++)
+  {
+    /* Reading the encrypted firmware block from external flash */
+    ExtFlashReadArray(SELECT_FAST_READ,
+                       ((new_fw ? NEW_FW_ADDRESS: BACKUP_FW_ADDRESS) + (i * sizeof(fw_buf))),
+                       (void *)fw_buf, sizeof(fw_buf));
+
+    /* Decrypting the firmware block */
+    AES_CBC_decrypt_buffer(&ctx, (uint8_t *)&fw_buf, sizeof(fw_buf));
+
+    for (uint8_t j = 0; j < 4; j++)
+    {
+      /* Programming the decrypted firmware block */
+      if (prvNextProgramMcuFlash(ptr, (uint32_t *)&fw_buf[j * 4]) == BOOTLOADER_ERROR_WRITE)
+      {
+        PrintfLogsCRLF("ERROR: Failure to program the %luth 4word of the firmware!", i);
+        prvEndProgramMcuFlash();
+
+        return BOOTLOADER_ERROR_WRITE;
+      }
+    }
+  }
+
+  prvEndProgramMcuFlash();
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  Begin flash programming: this function unlocks the flash and sets
+ *         the data pointer to the start of application flash area.
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ * @retval BOOTLOADER_OK is returned in every case
+ */
+uint8_t prvBeginProgramMcuFlash(const FIRMWARE_HEADER *pheader)
+{
+  FIRMWARE_ENCRYPTED_HEADER *ptr = (FIRMWARE_ENCRYPTED_HEADER *)&pheader->encrypted_header;
+
+  /* Reset flash destination address */
+  flash_ptr = ptr->image_load_address;
+
+  /* Unlock flash */
+  HAL_FLASH_Unlock();
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  Program 32bit data into flash: this function writes an 4bytes (32bit)
+ *         data chunk into the flash and increments the data pointer.
+ * @param  data: 32bit data chunk to be written into flash
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ * @retval BOOTLOADER_OK: upon success
+ * @retval BOOTLOADER_ERROR_WRITE: upon failure
+ */
+uint8_t prvNextProgramMcuFlash(const FIRMWARE_HEADER *pheader, void *data)
+{
+  FIRMWARE_ENCRYPTED_HEADER *ptr = (FIRMWARE_ENCRYPTED_HEADER *)&pheader->encrypted_header;
+
+  if (!(flash_ptr <= (FLASH_BASE + FLASH_SIZE - 8)) || (flash_ptr < ptr->image_load_address))
+  {
+    HAL_FLASH_Lock();
+    return BOOTLOADER_ERROR_WRITE;
+  }
+
+  if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, flash_ptr, *(uint32_t *)data) == HAL_OK)
+  {
+    /* Check the written value */
+    if (*(uint32_t *)flash_ptr != *(uint32_t *)data)
+    {
+      /* Flash content doesn't match source content */
+      HAL_FLASH_Lock();
+      return BOOTLOADER_ERROR_WRITE;
+    }
+    /* Increment Flash destination address */
+    flash_ptr += 4;
+  }
+  else
+  {
+    /* Error occurred while writing data into Flash */
+    HAL_FLASH_Lock();
+    return BOOTLOADER_ERROR_WRITE;
+  }
+
+  return BOOTLOADER_OK;
+}
+/******************************************************************************/
+
+
+
+
+/**
+ * @brief  Finish flash programming: this function finalizes the flash
+ *         programming by locking the flash.
+ * @return Bootloader error code ::BOOTLOADER_ERROR_CODE
+ * @retval BOOTLOADER_OK is returned in every case
+ */
+uint8_t prvEndProgramMcuFlash(void)
+{
+  /* Lock flash */
+  HAL_FLASH_Lock();
 
   return BOOTLOADER_OK;
 }
